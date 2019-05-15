@@ -74,13 +74,13 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="HttpServer.cs" />
-    <Compile Include="HttpWorker.cs" />
     <Compile Include="Mercury.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="Mercury.Designer.cs">
       <DependentUpon>Mercury.cs</DependentUpon>
     </Compile>
+    <Compile Include="MercuryServer.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <EmbeddedResource Include="Mercury.resx">
@@ -96,7 +96,9 @@
       <DependentUpon>Resources.resx</DependentUpon>
       <DesignTime>True</DesignTime>
     </Compile>
-    <None Include="app.config" />
+    <None Include="app.config">
+      <SubType>Designer</SubType>
+    </None>
     <None Include="log4net.config">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

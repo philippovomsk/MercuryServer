@@ -1,4 +1,5 @@
 ﻿using log4net;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Net;
 using System.Net.Sockets;
@@ -17,10 +18,18 @@ namespace MercuryServer
 
         private int port;
 
+        private MercuryServer mercury;
+
         public int Port
         {
             get { return port; }
             private set { }
+        }
+
+        public MercuryServer Mercury
+        {
+            get { return mercury; }
+            set { mercury = value; }
         }
 
         public HttpServer(int port)
@@ -47,47 +56,144 @@ namespace MercuryServer
             {
                 try
                 {
+                    // обработка запросов в один поток
                     TcpClient client = listener.AcceptTcpClient();
-                    Thread Thread = new Thread(new ParameterizedThreadStart(ClientThread));
-                    Thread.Start(client);
+                    ProcessRequest(client);
                 }
                 catch (Exception ex)
                 {
-                    log.Error("Ошибка http сервера", ex);
+                    if (!(ex is ThreadAbortException))
+                    {
+                        log.Error("Ошибка http сервера", ex);
+                    }
                 }
             }
         }
 
-        private static void ClientThread(Object StateInfo)
+        public void ProcessRequest(TcpClient client)
         {
-            new HttpWorker((TcpClient) StateInfo);
+            NetworkStream stream = client.GetStream();
+
+            StringBuilder request = new StringBuilder();
+            byte[] buffer = new byte[1024];
+
+            int numberOfBytesRead = 0;
+            do
+            {
+                // 1с подтормаживает и не успевает прислать тело запроса, поэтому спим и удостоверяемся, что реально всё.
+                if (numberOfBytesRead > 0)
+                {
+                    Thread.Sleep(50);
+                    numberOfBytesRead = 0;
+                    if(!stream.DataAvailable) { break;  }
+                }
+
+                numberOfBytesRead = stream.Read(buffer, 0, buffer.Length);
+                request.AppendFormat("{0}", Encoding.UTF8.GetString(buffer, 0, numberOfBytesRead));
+            }
+            while (stream.DataAvailable || numberOfBytesRead > 0);
+
+
+            log.Debug("Получен запрос: " + request.ToString());
+
+            String requestString = request.ToString();
+            int bodypos = requestString.IndexOf("\r\n\r\n");
+            string body = "";
+            if (bodypos > 0)
+            {
+                body = requestString.Substring(bodypos + 4);
+            }
+
+            if(!requestString.StartsWith("POST"))
+            {
+                answerError(client);
+                return;
+            }
+
+            JObject requestJson = new JObject();
+
+            if (body.Trim().Length != 0)
+            {
+                requestJson = JObject.Parse(body);
+            }
+
+            int posHttp = requestString.IndexOf("HTTP");
+            string requestType = requestString.Substring(4, posHttp - 4).Trim().ToLower();
+
+            JObject resultJson = new JObject();
+
+            switch(requestType)
+            {
+                case "/openshift":
+                    if(!mercury.openShift(requestJson, out resultJson))
+                    {
+                        resultJson["error"] = mercury.LastError;
+                    }
+                    break;
+
+                case "/closeshift":
+                    if (!mercury.closeShift(requestJson, out resultJson))
+                    {
+                        resultJson["error"] = mercury.LastError;
+                    }
+                    break;
+
+                case "/status":
+                    if(!mercury.getCurrentStatus(out resultJson))
+                    {
+                        resultJson["error"] = mercury.LastError;
+                    }
+                    break;
+
+                case "/printxreport":
+                    if(!mercury.printXReport())
+                    {
+                        resultJson["error"] = mercury.LastError;
+                    }
+                    break;
+
+                case "/printcheck":
+                    if(!mercury.printCheck(requestJson, out resultJson))
+                    {
+                        resultJson["error"] = mercury.LastError;
+                    }
+                    break;
+
+                default:
+                    answerError(client);
+                    return;
+            }
+
+
+            string result = resultJson.ToString();
+            string resultCode = "200 OK";
+            if (resultJson["error"] != null)
+            {
+                resultCode = "403 Forbidden";
+            }
+
+            string resultHtml = "HTTP/1.1 " + resultCode + "\nContent-type: text/html\nContent-Length:" + 
+                Encoding.UTF8.GetBytes(result).Length + "\n\n" + result;
+
+            byte[] resultBytes = Encoding.UTF8.GetBytes(resultHtml);
+            client.GetStream().Write(resultBytes, 0, resultBytes.Length);
+            client.Close();
         }
 
-
-        private void Process(HttpListenerContext context)
+        private void answerError(TcpClient client)
         {
-            string path = context.Request.Url.AbsolutePath;
+            string answerHtml = "<html><head><meta charset=\"UTF-8\"></head><body>" +
+                "<h1>Что-то пошло не так! :)</h1><br>Это http-сервер для печати чеков на Меркурии 119-Ф (usb)<br>" +
+                "<br>Cтраница сервера <a href=\"https://github.com/philippovomsk/MercuryServer\">" +
+                "https://github.com/philippovomsk/MercuryServer</a></body></html>";
 
-            log.Debug("Получен http запрос " + path);
-            try
-            {
-                byte[] bytes = Encoding.UTF8.GetBytes("Запрос " + path);
 
-                context.Response.ContentType = "text/plain";
-                context.Response.ContentLength64 = bytes.Length;
-                context.Response.AddHeader("Date", DateTime.Now.ToString("r"));
+            string answer = "HTTP/1.1 400 Bad Request\nContent-type: text/html\nContent-Length:" + 
+                Encoding.UTF8.GetBytes(answerHtml).Length + "\n\n" + answerHtml;
+            byte[] answerBytes = Encoding.UTF8.GetBytes(answer);
 
-                context.Response.OutputStream.Write(bytes, 0, bytes.Length);
-
-                context.Response.StatusCode = (int)HttpStatusCode.OK;
-                context.Response.OutputStream.Flush();
-            }
-            catch (Exception ex)
-            {
-                context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
-            }
-
-            context.Response.OutputStream.Close();
+            client.GetStream().Write(answerBytes, 0, answerBytes.Length);
+            client.Close();
         }
     }
 }
