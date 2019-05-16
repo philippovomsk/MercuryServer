@@ -102,10 +102,15 @@ namespace MercuryServer
             string body = "";
             if (bodypos > 0)
             {
-                body = requestString.Substring(bodypos + 4);
+                body = requestString.Substring(bodypos + 4).Trim();
             }
 
-            if(!requestString.StartsWith("POST"))
+            // 1c начиная с 8.13 при пост запросе перед телом вставляет знак вопроса
+            if (!body.StartsWith("{")) {
+                body = body.Substring(1);
+            }
+
+            if (!requestString.StartsWith("POST"))
             {
                 answerError(client);
                 return;

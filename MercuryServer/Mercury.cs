@@ -158,7 +158,7 @@ namespace MercuryServer
         {
             log.Debug("Выход из приложения");
             mercury.disconnect();
-            server.Stop();
+            //server.Stop();
             Application.Exit();
         }
 
