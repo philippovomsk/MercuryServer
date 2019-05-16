@@ -37,13 +37,14 @@ namespace MercuryServer
             this.port = port;
             log.Debug("Запуск http сервера на " + port + " порту");
             serverThread = new Thread(this.Listen);
+            serverThread.IsBackground = true;
             serverThread.Start();
         }
 
         public void Stop()
         {
             log.Debug("Остановка http сервера");
-            serverThread.Abort();
+            //serverThread.Abort();
             listener.Stop();
         }
 
