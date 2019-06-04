@@ -18,7 +18,7 @@
 
 ## Настройка
 
-В папке с MercuryServer.exe есть файл конфигурации MercuryServer.exe.config, в котором нужно настроить ip-адрес и порт ОФД. По умолчанию в качестве ОФД настроен Петер-сервис <ofd.ru>.
+В папке с MercuryServer.exe есть файл конфигурации MercuryServer.exe.config, в котором нужно настроить ip-адрес и порт ОФД. По умолчанию в качестве ОФД настроен Петер-сервис <http://ofd.ru>.
 
     <add key="ofdIP" value="94.143.160.11"/> 
     <add key="ofdPort" value="4000"/>
