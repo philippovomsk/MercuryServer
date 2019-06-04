@@ -4,12 +4,15 @@ using System;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 
 namespace MercuryServer
 {
     class HttpServer
     {
+        private static readonly int waitRequestTimeout = 10000; // 10 sec
+
         private static readonly ILog log = LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
 
         private Thread serverThread;
@@ -71,6 +74,7 @@ namespace MercuryServer
             }
         }
 
+        // 1с подтормаживает и прислает тело запроса с задержкой
         public void ProcessRequest(TcpClient client)
         {
             NetworkStream stream = client.GetStream();
@@ -78,26 +82,67 @@ namespace MercuryServer
             StringBuilder request = new StringBuilder();
             byte[] buffer = new byte[1024];
 
-            int numberOfBytesRead = 0;
+            int contentLength = -1;
+            int readedContentLength = -1;
+            Regex clReg = new Regex("^Content-Length:(.*)$", RegexOptions.Multiline);
+
+            int currentTimeout = 0;
             do
             {
-                // 1с подтормаживает и не успевает прислать тело запроса, поэтому спим и удостоверяемся, что реально всё.
-                if (numberOfBytesRead > 0)
+                while (!stream.DataAvailable)
                 {
-                    Thread.Sleep(50);
-                    numberOfBytesRead = 0;
-                    if(!stream.DataAvailable) { break;  }
+                    Thread.Sleep(100);
+                    currentTimeout += 100;
+                    if (currentTimeout > waitRequestTimeout)
+                    {
+                        goto mainloop;
+                    }
                 }
 
-                numberOfBytesRead = stream.Read(buffer, 0, buffer.Length);
+                int numberOfBytesRead = stream.Read(buffer, 0, buffer.Length);
+
+                // подсчет числа считанных байтов тела
+                if (readedContentLength < 0)
+                {
+                    for (int i = 3; i < numberOfBytesRead; i++)
+                    {
+                        if (buffer[i] == 10 && buffer[i - 1] == 13 && buffer[i - 2] == 10 && buffer[i - 3] == 13)
+                        {
+                            readedContentLength = numberOfBytesRead - i - 1;
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    readedContentLength += numberOfBytesRead;
+                }
+
                 request.AppendFormat("{0}", Encoding.UTF8.GetString(buffer, 0, numberOfBytesRead));
+
+                // получения длины тела запроса
+                if (contentLength == -1)
+                {
+                    var clMatch = clReg.Match(request.ToString());
+                    if (clMatch.Success)
+                    {
+                        contentLength = Int16.Parse(clMatch.Groups[1].ToString());
+                    }
+                }
             }
-            while (stream.DataAvailable || numberOfBytesRead > 0);
+            while (stream.DataAvailable || readedContentLength < contentLength);
 
-
+        mainloop:
             log.Debug("Получен запрос: " + request.ToString());
 
             String requestString = request.ToString();
+
+            if (!requestString.StartsWith("POST"))
+            {
+                answerError(client);
+                return;
+            }
+
             int bodypos = requestString.IndexOf("\r\n\r\n");
             string body = "";
             if (bodypos > 0)
@@ -106,14 +151,10 @@ namespace MercuryServer
             }
 
             // 1c начиная с 8.13 при пост запросе перед телом вставляет знак вопроса
-            if (!body.StartsWith("{")) {
-                body = body.Substring(1);
-            }
-
-            if (!requestString.StartsWith("POST"))
+            if (body.Length > 0 && !body.StartsWith("{"))
             {
-                answerError(client);
-                return;
+                log.Debug("первый символ тела запроса " + body[0] + " " + ((int)body[0]));
+                body = body.Substring(1);
             }
 
             JObject requestJson = new JObject();
@@ -128,10 +169,10 @@ namespace MercuryServer
 
             JObject resultJson = new JObject();
 
-            switch(requestType)
+            switch (requestType)
             {
                 case "/openshift":
-                    if(!mercury.openShift(requestJson, out resultJson))
+                    if (!mercury.openShift(requestJson, out resultJson))
                     {
                         resultJson["error"] = mercury.LastError;
                     }
@@ -145,21 +186,21 @@ namespace MercuryServer
                     break;
 
                 case "/status":
-                    if(!mercury.getCurrentStatus(out resultJson))
+                    if (!mercury.getCurrentStatus(out resultJson))
                     {
                         resultJson["error"] = mercury.LastError;
                     }
                     break;
 
                 case "/printxreport":
-                    if(!mercury.printXReport())
+                    if (!mercury.printXReport())
                     {
                         resultJson["error"] = mercury.LastError;
                     }
                     break;
 
                 case "/printcheck":
-                    if(!mercury.printCheck(requestJson, out resultJson))
+                    if (!mercury.printCheck(requestJson, out resultJson))
                     {
                         resultJson["error"] = mercury.LastError;
                     }
@@ -178,7 +219,7 @@ namespace MercuryServer
                 resultCode = "403 Forbidden";
             }
 
-            string resultHtml = "HTTP/1.1 " + resultCode + "\nContent-type: text/html\nContent-Length:" + 
+            string resultHtml = "HTTP/1.1 " + resultCode + "\nContent-type: text/html\nContent-Length:" +
                 Encoding.UTF8.GetBytes(result).Length + "\n\n" + result;
 
             byte[] resultBytes = Encoding.UTF8.GetBytes(resultHtml);
@@ -194,7 +235,7 @@ namespace MercuryServer
                 "https://github.com/philippovomsk/MercuryServer</a></body></html>";
 
 
-            string answer = "HTTP/1.1 400 Bad Request\nContent-type: text/html\nContent-Length:" + 
+            string answer = "HTTP/1.1 400 Bad Request\nContent-type: text/html\nContent-Length:" +
                 Encoding.UTF8.GetBytes(answerHtml).Length + "\n\n" + answerHtml;
             byte[] answerBytes = Encoding.UTF8.GetBytes(answer);
 

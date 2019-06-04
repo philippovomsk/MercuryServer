@@ -1,11 +1,7 @@
 ﻿using log4net;
 using MercuryCom;
 using Newtonsoft.Json.Linq;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
 
@@ -363,7 +359,7 @@ namespace MercuryServer
         {
             log.Debug("Печать чека: " + parameters.ToString());
 
-            if(!getCurrentStatus(out result))
+            if (!getCurrentStatus(out result))
             {
                 processError();
                 return false;
@@ -391,6 +387,32 @@ namespace MercuryServer
 
             if (!mercury.ProcessCheck(mercuryDeviceId, cashierName, true, checkPackage, out checkNumber, out sessionNumber, out fiscalSign, out addressSiteInspections))
             {
+                string message = "";
+                int errorCode = mercury.GetLastError(out message);
+
+                if(errorCode == 278) // смена открыта больше 24 часов, закрываем и пробуем напечатать чек еще раз.
+                {
+                    JObject closeParameters = new JObject();
+                    closeParameters["CashierName"] = cashierName;
+
+                    Regex cashierVATINReg = new Regex("CashierVATIN=\"(.*?)\"");
+                    var vatinnmatch = cashierVATINReg.Match(checkPackage);
+                    if (vatinnmatch.Success)
+                    {
+                        closeParameters["CashierVATIN"] = vatinnmatch.Groups[1].ToString();
+                    }
+
+                    JObject closeResult = new JObject();
+
+                    if (!closeShift(closeParameters, out closeResult))
+                    {
+                        processError();
+                        return false;
+                    }
+
+                    return printCheck(parameters, out result);
+                }
+
                 processError();
                 return false;
             }
