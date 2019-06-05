@@ -130,7 +130,7 @@ namespace MercuryServer
                     }
                 }
             }
-            while (stream.DataAvailable || readedContentLength < contentLength);
+            while (stream.DataAvailable || (contentLength != -1 && readedContentLength < contentLength));
 
         mainloop:
             log.Debug("Получен запрос: " + request.ToString());
